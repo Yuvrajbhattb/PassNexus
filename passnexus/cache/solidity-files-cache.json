@@ -1,0 +1,41 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\yuvra\\OneDrive\\Pictures\\29_11\\passnexus\\contracts\\PassNexusRegistry.sol": {
+      "lastModificationDate": 1764440529617,
+      "contentHash": "fa7645527f05e4f794d6d7854bbfd37b",
+      "sourceName": "contracts/PassNexusRegistry.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.28"
+      ],
+      "artifacts": [
+        "PassNexusRegistry"
+      ]
+    }
+  }
+}
