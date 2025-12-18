@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Client } from '@xmtp/xmtp-js';
 import type { Account } from 'thirdweb/wallets';
 import { ethers } from 'ethers';
+import type { FriendRequestMessage, FriendRequestAcceptMessage } from '../types';
 
 interface XMTPMessage {
     id: string;
@@ -23,6 +24,14 @@ interface SharePasswordMessage {
     sharedBy: string;
 }
 
+interface FriendRequest {
+    id: string;
+    from: string;
+    name: string;
+    email?: string;
+    timestamp: number;
+}
+
 export function useXMTP(account: Account | undefined) {
     const [client, setClient] = useState<Client | null>(null);
     const [isInitialized, setIsInitialized] = useState(false);
@@ -30,6 +39,7 @@ export function useXMTP(account: Account | undefined) {
     const [error, setError] = useState<string | null>(null);
     const [messages, setMessages] = useState<XMTPMessage[]>([]);
     const [sharedPasswords, setSharedPasswords] = useState<SharePasswordMessage[]>([]);
+    const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
 
     /**
      * Load conversations and filter for shared passwords
@@ -39,6 +49,7 @@ export function useXMTP(account: Account | undefined) {
             const conversations = await xmtpClient.conversations.list();
             const allMessages: XMTPMessage[] = [];
             const passwordShares: SharePasswordMessage[] = [];
+            const requests: FriendRequest[] = [];
 
             for (const conversation of conversations) {
                 const msgs = await conversation.messages();
@@ -53,11 +64,24 @@ export function useXMTP(account: Account | undefined) {
 
                     allMessages.push(messageData);
 
-                    // Try to parse as JSON to check for password share
+                    // Try to parse as JSON to check message type
                     try {
                         const parsed = JSON.parse(msg.content);
+
                         if (parsed.type === 'passnexus-share') {
                             passwordShares.push(parsed as SharePasswordMessage);
+                        } else if (parsed.type === 'friend-request') {
+                            // Only show requests from others (not sent by me)
+                            if (msg.senderAddress.toLowerCase() !== account?.address.toLowerCase()) {
+                                const friendReq: FriendRequest = {
+                                    id: `${msg.senderAddress}-${msg.sent.getTime()}`,
+                                    from: parsed.content.address,
+                                    name: parsed.content.name,
+                                    email: parsed.content.email,
+                                    timestamp: parsed.timestamp
+                                };
+                                requests.push(friendReq);
+                            }
                         }
                     } catch {
                         // Not a JSON message, skip
@@ -67,6 +91,7 @@ export function useXMTP(account: Account | undefined) {
 
             setMessages(allMessages);
             setSharedPasswords(passwordShares);
+            setFriendRequests(requests);
         } catch (error) {
             console.error('Failed to load conversations:', error);
             throw error;
@@ -110,12 +135,12 @@ export function useXMTP(account: Account | undefined) {
             }
 
             console.log('Creating XMTP client for:', account.address);
-            console.log('Using dev network for XMTP');
+            console.log('Using production network for XMTP V3');
 
             // Create XMTP client - this will trigger wallet signature
-            // Using 'dev' network to avoid mainnet requirements
+            // Using 'production' network for XMTP V3 (V2 is deprecated)
             const xmtpClient = await Client.create(signer, {
-                env: 'dev' // Use dev network instead of production
+                env: 'production' // V3 requires production environment
             });
 
             console.log('XMTP client created successfully');
@@ -211,6 +236,72 @@ export function useXMTP(account: Account | undefined) {
         }
     }, [client]);
 
+    /**
+     * Send a friend request message
+     */
+    const sendFriendRequest = useCallback(async (
+        recipientAddress: string,
+        myName: string,
+        myAddress: string,
+        myEmail?: string
+    ) => {
+        if (!client) {
+            throw new Error('XMTP client not initialized');
+        }
+
+        try {
+            const conversation = await client.conversations.newConversation(recipientAddress);
+
+            const requestMessage: FriendRequestMessage = {
+                type: 'friend-request',
+                content: {
+                    name: myName,
+                    address: myAddress,
+                    email: myEmail
+                },
+                timestamp: Date.now()
+            };
+
+            await conversation.send(JSON.stringify(requestMessage));
+            return true;
+        } catch (error) {
+            console.error('Failed to send friend request:', error);
+            throw error;
+        }
+    }, [client]);
+
+    /**
+     * Send a request accepted message
+     */
+    const sendRequestAccepted = useCallback(async (
+        recipientAddress: string,
+        myName: string,
+        myAddress: string
+    ) => {
+        if (!client) {
+            throw new Error('XMTP client not initialized');
+        }
+
+        try {
+            const conversation = await client.conversations.newConversation(recipientAddress);
+
+            const acceptMessage: FriendRequestAcceptMessage = {
+                type: 'request-accepted',
+                content: {
+                    name: myName,
+                    address: myAddress
+                },
+                timestamp: Date.now()
+            };
+
+            await conversation.send(JSON.stringify(acceptMessage));
+            return true;
+        } catch (error) {
+            console.error('Failed to send acceptance message:', error);
+            throw error;
+        }
+    }, [client]);
+
     return {
         client,
         isInitialized,
@@ -218,8 +309,11 @@ export function useXMTP(account: Account | undefined) {
         error,
         messages,
         sharedPasswords,
+        friendRequests,
         initializeXMTP,
         sharePassword,
+        sendFriendRequest,
+        sendRequestAccepted,
         refreshMessages
     };
 }

@@ -102,31 +102,242 @@ function SharedPasswordCard({ title, username, encryptedPassword, sharedBy, mast
     );
 }
 
-interface SharedTabProps {
+interface IncomingPasswordCardProps {
+    title: string;
+    username: string;
+    encryptedPassword: string;
+    sharedBy: string;
+    ipfsCid: string;
+    masterKey: string | null;
+    onSaveToVault: () => Promise<void>;
+}
+
+function IncomingPasswordCard({ title, username, encryptedPassword, sharedBy, masterKey, onSaveToVault }: IncomingPasswordCardProps) {
+    const [isRevealed, setIsRevealed] = useState(false);
+    const [decryptedPassword, setDecryptedPassword] = useState<string | null>(null);
+    const [isDecrypting, setIsDecrypting] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleView = async () => {
+        if (isRevealed) {
+            setIsRevealed(false);
+            setDecryptedPassword(null);
+        } else if (!masterKey) {
+            toast.error('Master key not initialized');
+            return;
+        } else {
+            const toastId = toast.loading('Decrypting password...');
+            setIsDecrypting(true);
+            try {
+                const password = decryptData<string>(encryptedPassword, masterKey);
+                setDecryptedPassword(password);
+                setIsRevealed(true);
+                toast.success('Successfully Decrypted!', { id: toastId });
+            } catch (error) {
+                console.error('Failed to decrypt:', error);
+                toast.error('Decryption Failed', { id: toastId });
+            } finally {
+                setIsDecrypting(false);
+            }
+        }
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await onSaveToVault();
+        } catch (error) {
+            console.error('Failed to save:', error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-br from-green-900/20 to-blue-900/20 border border-green-500/30 rounded-xl p-6"
+        >
+            <div className="flex items-center gap-3 mb-4">
+                <span className="text-3xl">🔑</span>
+                <div className="flex-1">
+                    <h4 className="text-lg font-semibold text-white">Incoming Credential</h4>
+                    <p className="text-sm text-gray-400">From: {sharedBy.slice(0, 6)}...{sharedBy.slice(-4)}</p>
+                </div>
+            </div>
+
+            <div className="space-y-3 mb-4">
+                <div>
+                    <label className="block text-xs text-gray-500 mb-1">Title</label>
+                    <p className="text-white font-medium">{title}</p>
+                </div>
+                <div>
+                    <label className="block text-xs text-gray-500 mb-1">Username</label>
+                    <p className="text-white">{username}</p>
+                </div>
+                <div>
+                    <label className="block text-xs text-gray-500 mb-1">Password</label>
+                    {isRevealed && decryptedPassword ? (
+                        <div>
+                            <p className="text-neon-blue font-mono mb-2">{decryptedPassword}</p>
+                            <div className="flex items-center gap-2 text-green-400 text-sm">
+                                <span className="text-lg">✓</span>
+                                <span className="font-medium">Decrypted</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className="text-gray-400">••••••••</p>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex gap-2">
+                <button
+                    onClick={handleView}
+                    disabled={isDecrypting}
+                    className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                    {isDecrypting ? '⏳' : isRevealed ? '👁️' : '👁️'}
+                    {isDecrypting ? 'Decrypting...' : isRevealed ? 'Hide' : 'View'}
+                </button>
+                <button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="flex-1 px-4 py-2 bg-neon-blue hover:bg-blue-400 text-slate-900 rounded-lg transition-colors font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                    {isSaving ? '⏳' : '💾'}
+                    {isSaving ? 'Saving...' : 'Save to Vault'}
+                </button>
+            </div>
+        </motion.div>
+    );
+}
+
+interface SharedCenterTabProps {
     account: Account | undefined;
 }
 
-export default function SharedTab({ account }: SharedTabProps) {
-    const { isInitialized, isLoading, error, sharedPasswords, initializeXMTP, refreshMessages } = useXMTP(account);
-    const { initializeMasterKey } = useStorage(account);
+export default function SharedCenterTab({ account }: SharedCenterTabProps) {
+    const [activeSubTab, setActiveSubTab] = useState<'received' | 'sent' | 'passwords'>('received');
+
+    const {
+        isInitialized,
+        isLoading,
+        error,
+        sharedPasswords,
+        friendRequests,
+        initializeXMTP,
+        refreshMessages,
+        sendRequestAccepted
+    } = useXMTP(account);
+
+    const {
+        initializeMasterKey,
+        addFriend,
+        addPassword,
+        sharedHistory,
+        updateSharedHistoryStatus,
+        removeSharedHistoryItem
+    } = useStorage(account);
+
     const [masterKey, setMasterKey] = useState<string | null>(null);
 
-    // Initialize master key when XMTP is initialized
     const handleInitialize = async () => {
         await initializeXMTP();
-        // Initialize master key for decryption
         const key = await initializeMasterKey('standard');
         setMasterKey(key);
     };
 
     const handleRefresh = async () => {
         await refreshMessages();
-        // Ensure master key is initialized
         if (!masterKey) {
             const key = await initializeMasterKey('standard');
             setMasterKey(key);
         }
     };
+
+    const handleAcceptRequest = async (request: typeof friendRequests[0]) => {
+        try {
+            const toastId = toast.loading('Accepting friend request...');
+            await addFriend(request.from, request.name, request.email);
+
+            if (account) {
+                await sendRequestAccepted(
+                    request.from,
+                    request.email || 'You',
+                    account.address
+                );
+            }
+
+            const historyItem = sharedHistory.find(
+                item => item.type === 'Friend Request' && item.from === request.from
+            );
+            if (historyItem) {
+                updateSharedHistoryStatus(historyItem.id, 'Accepted');
+            }
+
+            toast.success('Friend request accepted!', { id: toastId });
+            await refreshMessages();
+        } catch (error) {
+            console.error('Failed to accept friend request:', error);
+            toast.error('Failed to accept friend request');
+        }
+    };
+
+    const handleIgnoreRequest = async (request: typeof friendRequests[0]) => {
+        try {
+            const historyItem = sharedHistory.find(
+                item => item.type === 'Friend Request' && item.from === request.from
+            );
+            if (historyItem) {
+                removeSharedHistoryItem(historyItem.id);
+            }
+
+            toast.success('Friend request ignored');
+            await refreshMessages();
+        } catch (error) {
+            console.error('Failed to ignore friend request:', error);
+            toast.error('Failed to ignore friend request');
+        }
+    };
+
+    const handleSaveToVault = async (share: typeof sharedPasswords[0]) => {
+        try {
+            if (!masterKey) {
+                toast.error('Master key not initialized');
+                return;
+            }
+
+            const toastId = toast.loading('Saving to vault...');
+
+            // Decrypt the password
+            const decrypted = decryptData<string>(share.encryptedPassword, masterKey);
+
+            // Save using addPassword
+            await addPassword(
+                share.title,
+                share.username,
+                decrypted,
+                undefined,
+                'standard'
+            );
+
+            toast.success(`"${share.title}" saved to your vault!`, { id: toastId });
+        } catch (error) {
+            console.error('Failed to save to vault:', error);
+            toast.error('Failed to save to vault');
+        }
+    };
+
+    // Filter shared history
+    const sentItems = sharedHistory.filter(item => item.to);
+
+    const subTabs = [
+        { id: 'received' as const, label: 'Received', icon: '📥', count: friendRequests.length + sharedPasswords.length },
+        { id: 'sent' as const, label: 'Sent', icon: '📤', count: sentItems.length },
+        { id: 'passwords' as const, label: 'Passwords', icon: '🔑', count: sharedPasswords.length },
+    ];
 
     return (
         <div className="space-y-6">
@@ -205,9 +416,13 @@ export default function SharedTab({ account }: SharedTabProps) {
                 </AnimatePresence>
             )}
 
-            {/* Shared Passwords Grid */}
-            {isInitialized && !isLoading && (
-                <>
+            {/* Shared Passwords with Save to Vault */}
+            {isInitialized && (
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                >
                     {sharedPasswords.length === 0 ? (
                         <motion.div
                             initial={{ opacity: 0 }}
@@ -229,24 +444,27 @@ export default function SharedTab({ account }: SharedTabProps) {
                             </button>
                         </motion.div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {sharedPasswords.map((share, index) => (
-                                <SharedPasswordCard
-                                    key={`${share.sharedBy}-${index}`}
-                                    title={share.title}
-                                    username={share.username}
-                                    encryptedPassword={share.encryptedPassword}
-                                    sharedBy={share.sharedBy}
-                                    ipfsCid={share.ipfsCid}
-                                    masterKey={masterKey}
-                                    onDecrypt={(password) => {
-                                        console.log('Decrypted:', password);
-                                    }}
-                                />
-                            ))}
+                        <div className="space-y-4">
+                            <h3 className="text-xl font-semibold text-white mb-4">
+                                Incoming Credentials ({sharedPasswords.length})
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {sharedPasswords.map((share, index) => (
+                                    <IncomingPasswordCard
+                                        key={`${share.sharedBy}-${index}`}
+                                        title={share.title}
+                                        username={share.username}
+                                        encryptedPassword={share.encryptedPassword}
+                                        sharedBy={share.sharedBy}
+                                        ipfsCid={share.ipfsCid}
+                                        masterKey={masterKey}
+                                        onSaveToVault={async () => await handleSaveToVault(share)}
+                                    />
+                                ))}
+                            </div>
                         </div>
                     )}
-                </>
+                </motion.div>
             )}
 
             {/* Refreshing Indicator */}
